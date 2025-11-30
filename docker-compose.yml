@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # 1. API SERVER (FastAPI)
+  backend:
+    build: ./backend
+    container_name: content_factory_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app  # Hot-reload: Ubah kode di laptop, container ikut berubah
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/content_factory_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - OPENAI_API_KEY=ganti_nanti_di_env_file
+    depends_on:
+      - db
+      - redis
+
+  # 2. WORKER SERVER (Celery - Untuk AI Processing Background)
+  worker:
+    build: ./backend
+    container_name: content_factory_worker
+    command: celery -A app.tasks.pipeline worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/content_factory_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
+
+  # 3. DATABASE (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    container_name: content_factory_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=content_factory_db
+    ports:
+      - "5432:5432"
+
+  # 4. CACHE/QUEUE (Redis)
+  redis:
+    image: redis:7-alpine
+    container_name: content_factory_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

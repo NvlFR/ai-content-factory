@@ -1,0 +1,56 @@
+# --- GLOBAL & OS ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+arsip
+
+# --- SECURITY (PENTING!) ---
+# Jangan pernah commit file env ke git!
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# --- PYTHON (BACKEND) ---
+backend/__pycache__/
+*.py[cod]
+*$py.class
+backend/venv/
+backend/env/
+backend/.pytest_cache/
+backend/htmlcov/
+backend/.coverage
+
+# --- CELERY WORKER ---
+# File schedule/pid celery
+celerybeat-schedule
+celerybeat.pid
+
+# --- NODE.JS (FRONTEND) ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+
+# --- DOCKER ---
+# Kita tidak mau commit database lokal
+postgres_data/
+redis_data/
+
+# --- MEDIA & TEMP FILES (PROJECT SPECIFIC) ---
+# Folder tempat kita simpan video sementara
+# Supaya repo github tidak bengkak karena video 1GB
+backend/downloads/
+backend/temp/
+backend/media/
+backend/outputs/
+*.mp4
+*.mp3
+*.wav
+*.mkv
