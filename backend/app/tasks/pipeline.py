@@ -12,6 +12,11 @@ import re
 from google import genai
 from google.genai import types
 
+# --- IMPORT DATABASE ---
+from app.db.database import SessionLocal
+from app.db.models import Project, GeneratedClip
+# -----------------------
+
 # Konfigurasi Celery
 celery_app = Celery(
     "worker",
@@ -25,50 +30,91 @@ def process_video_pipeline(self, youtube_url: str):
     work_dir = f"downloads/{task_id}"
     os.makedirs(work_dir, exist_ok=True)
     
-    print(f"🚀 [Task {task_id}] Memulai Proses V5 (JSON-SRT Stabilizer)")
+    print(f"🚀 [Task {task_id}] Memulai Proses V5 (Save to DB)")
 
-    # 1. DOWNLOAD
-    self.update_state(state='PROGRESS', meta={'status': 'Downloading Video...'})
-    video_path = _download_video(youtube_url, work_dir)
-    if not video_path: return {"status": "failed", "error": "Download failed"}
-
-    # 2. GEMINI ANALYSIS
-    self.update_state(state='PROGRESS', meta={'status': 'Gemini Analysis...'})
-    analysis_result = _analyze_with_gemini_official(video_path)
+    # 1. BUKA KONEKSI DB
+    db = SessionLocal()
     
-    if not analysis_result:
-        return {"status": "failed", "error": "Gemini Analysis Failed"}
+    try:
+        # 2. CATAT PROJECT BARU (Status: Processing)
+        new_project = Project(id=task_id, youtube_url=youtube_url, status="processing")
+        db.add(new_project)
+        db.commit()
 
-    # 3. RENDER LOOP
-    self.update_state(state='PROGRESS', meta={'status': 'Rendering Clips...'})
-    
-    final_clips = []
-    for i, clip in enumerate(analysis_result):
-        if 'start_time' not in clip or 'end_time' not in clip: continue
+        # --- LOGIC PROCESSING DIMULAI ---
         
-        clip_name = f"clip_{i+1}.mp4"
-        title = clip.get('title', f'Clip {i+1}')
-        print(f"🔄 Processing Clip #{i+1}: {title}")
+        # A. DOWNLOAD
+        self.update_state(state='PROGRESS', meta={'status': 'Downloading Video...'})
+        video_path = _download_video(youtube_url, work_dir)
+        if not video_path: 
+            raise Exception("Download failed")
+
+        # B. GEMINI ANALYSIS
+        self.update_state(state='PROGRESS', meta={'status': 'Gemini is watching...'})
+        analysis_result = _analyze_with_gemini_official(video_path)
         
-        segmen = {
-            'start': _time_to_seconds(clip['start_time']),
-            'end': _time_to_seconds(clip['end_time'])
+        if not analysis_result:
+            raise Exception("Gemini Analysis Failed")
+
+        # C. RENDER LOOP
+        self.update_state(state='PROGRESS', meta={'status': 'Rendering Clips...'})
+        
+        final_clips = []
+        for i, clip in enumerate(analysis_result):
+            if 'start_time' not in clip or 'end_time' not in clip: continue
+            
+            clip_name = f"clip_{i+1}.mp4"
+            title = clip.get('title', f'Clip {i+1}')
+            print(f"🔄 Processing Clip #{i+1}: {title}")
+            
+            segmen = {
+                'start': _time_to_seconds(clip['start_time']),
+                'end': _time_to_seconds(clip['end_time']),
+                'text': clip.get('caption', '')
+            }
+            
+            result_path = _smart_crop_segment(video_path, segmen, work_dir, clip_name)
+            if result_path:
+                final_clips.append(result_path)
+                
+                # 3. CATAT CLIP KE DB (Langsung simpan begitu jadi)
+                new_clip = GeneratedClip(
+                    project_id=task_id, 
+                    file_path=result_path,
+                    title=title
+                )
+                db.add(new_clip)
+                db.commit()
+
+        # 4. UPDATE STATUS JADI COMPLETED
+        new_project.status = "completed"
+        # Opsional: Simpan judul video asli jika ada (nanti bisa diambil dari yt-dlp)
+        db.commit()
+
+        return {
+            "status": "completed",
+            "original_video": video_path,
+            "generated_clips": final_clips
         }
+
+    except Exception as e:
+        # KALAU ERROR, UPDATE STATUS DB JADI FAILED
+        print(f"🔥 Critical Error: {e}")
+        db.rollback() # Batalkan perubahan terakhir
+        # Query ulang object karena sesi mungkin stale setelah rollback
+        project = db.query(Project).filter(Project.id == task_id).first()
+        if project:
+            project.status = "failed"
+            db.commit()
+        return {"status": "failed", "error": str(e)}
         
-        result_path = _smart_crop_segment(video_path, segmen, work_dir, clip_name)
-        if result_path:
-            final_clips.append(result_path)
+    finally:
+        # TUTUP KONEKSI DB (WAJIB)
+        db.close()
 
-    return {
-        "status": "completed",
-        "original_video": video_path,
-        "generated_clips": final_clips
-    }
-
-# --- HELPER FUNCTIONS ---
+# --- HELPER FUNCTIONS (SAMA SEPERTI SEBELUMNYA) ---
 
 def _analyze_with_gemini_official(video_path):
-    # (Sama seperti sebelumnya, mencari 3 momen viral)
     print("🤖 Phase 1: Global Analysis...")
     try:
         client = genai.Client()
@@ -82,7 +128,7 @@ def _analyze_with_gemini_official(video_path):
         prompt = """
         You are a viral content editor. 
         Identify 3 distinct, engaging segments (15-60 seconds).
-        Return JSON List: [{"start_time": "MM:SS", "end_time": "MM:SS", "title": "Topic"}]
+        Return JSON List: [{"start_time": "MM:SS", "end_time": "MM:SS", "title": "Topic", "caption": "Exact spoken words"}]
         """
 
         response = client.models.generate_content(
@@ -97,12 +143,9 @@ def _analyze_with_gemini_official(video_path):
         return None
 
 def _generate_precise_json_subs(video_clip_path):
-    """
-    Phase 2: Minta JSON Transkrip (Lebih Aman daripada minta SRT langsung)
-    """
     print(f"   🎤 Transcribing clip to JSON...")
     try:
-        time.sleep(2) # Jeda aman
+        time.sleep(2) 
         client = genai.Client()
         clip_file = client.files.upload(file=video_clip_path)
         
@@ -110,7 +153,6 @@ def _generate_precise_json_subs(video_clip_path):
             time.sleep(1)
             clip_file = client.files.get(name=clip_file.name)
 
-        # Minta JSON list, bukan SRT raw
         prompt = """
         Listen carefully. Transcribe the audio perfectly.
         Break the text into short segments (max 4-5 words) for dynamic captions.
@@ -127,22 +169,17 @@ def _generate_precise_json_subs(video_clip_path):
             contents=[clip_file, prompt],
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
-        
         return json.loads(response.text)
     except Exception as e:
         print(f"❌ Gagal Transkrip JSON: {e}")
         return None
 
 def _json_to_srt_file(subs_json, output_path):
-    """
-    Konversi data JSON aman ke file SRT yang valid.
-    """
     def sec_to_srt_fmt(seconds):
         ms = int((seconds % 1) * 1000)
         seconds = int(seconds)
         mins, secs = divmod(seconds, 60)
         hrs, mins = divmod(mins, 60)
-        # Format SRT Wajib: 00:00:00,000 (Pakai Koma, bukan Titik)
         return f"{hrs:02}:{mins:02}:{secs:02},{ms:03}"
 
     with open(output_path, "w", encoding='utf-8') as f:
@@ -150,11 +187,7 @@ def _json_to_srt_file(subs_json, output_path):
             start = sec_to_srt_fmt(line['start'])
             end = sec_to_srt_fmt(line['end'])
             text = line['text']
-            
-            f.write(f"{i+1}\n")
-            f.write(f"{start} --> {end}\n")
-            f.write(f"{text}\n\n")
-    
+            f.write(f"{i+1}\n{start} --> {end}\n{text}\n\n")
     return True
 
 def _smart_crop_segment(video_path, segmen, output_folder, filename):
@@ -165,25 +198,13 @@ def _smart_crop_segment(video_path, segmen, output_folder, filename):
     output_filename = f"{output_folder}/{filename}"
     srt_path = f"{output_folder}/{filename}.srt"
 
-    # 1. CUTTING TEMP
     print(f"   ✂️ Cutting temp video ({start}-{end})...")
-    subprocess.run([
-        'ffmpeg', '-y', '-ss', str(start), '-t', str(duration),
-        '-i', video_path, '-c', 'copy', temp_cut_path
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(['ffmpeg', '-y', '-ss', str(start), '-t', str(duration), '-i', video_path, '-c', 'copy', temp_cut_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # 2. GENERATE SUBTITLES (Metode JSON Aman)
     subs_json = _generate_precise_json_subs(temp_cut_path)
-    
-    if subs_json:
-        # Konversi JSON ke SRT File
-        _json_to_srt_file(subs_json, srt_path)
-    else:
-        print("   ⚠️ Menggunakan Dummy Subtitle karena Transkrip Gagal")
-        # Dummy SRT
-        _create_srt("Subtitle Error", duration, srt_path)
+    if subs_json: _json_to_srt_file(subs_json, srt_path)
+    else: _create_srt("Subtitle Error", duration, srt_path)
 
-    # 3. DETEKSI WAJAH
     center_x = _scan_face_average(temp_cut_path)
     cap = cv2.VideoCapture(temp_cut_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -196,18 +217,9 @@ def _smart_crop_segment(video_path, segmen, output_folder, filename):
 
     print(f"   🔥 Burning Subtitles...")
     abs_srt_path = os.path.abspath(srt_path)
-    
-    # Style Box TikTok yang Proper
-    # BackColour=&H80000000 (Hitam Transparan 50%)
     style = "Fontname=Liberation Sans,Fontsize=14,PrimaryColour=&HFFFFFF,BorderStyle=3,BackColour=&H80000000,Outline=0,Shadow=0,Alignment=2,MarginV=25,Bold=1"
 
-    command = [
-        'ffmpeg', '-y',
-        '-i', temp_cut_path,
-        '-vf', f"crop={target_width}:{height}:{x_start}:0,subtitles='{abs_srt_path}':force_style='{style}',format=yuv420p",
-        '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '128k', '-preset', 'ultrafast',
-        output_filename
-    ]
+    command = ['ffmpeg', '-y', '-i', temp_cut_path, '-vf', f"crop={target_width}:{height}:{x_start}:0,subtitles='{abs_srt_path}':force_style='{style}',format=yuv420p", '-c:v', 'libx264', '-c:a', 'aac', '-b:a', '128k', '-preset', 'ultrafast', output_filename]
 
     try:
         subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -219,12 +231,10 @@ def _smart_crop_segment(video_path, segmen, output_folder, filename):
         return None
 
 def _create_srt(text, duration, output_path):
-    # Fungsi fallback sederhana
     content = f"1\n00:00:00,000 --> 00:00:05,000\n{text}"
     with open(output_path, "w", encoding='utf-8') as f: f.write(content)
 
 def _scan_face_average(video_path):
-    # (Sama seperti sebelumnya)
     cap = cv2.VideoCapture(video_path)
     mp_face = mp.solutions.face_detection
     detected_positions = []
@@ -244,7 +254,6 @@ def _scan_face_average(video_path):
     if detected_positions: return sum(detected_positions) / len(detected_positions)
     else: return 0.5 * cap.get(cv2.CAP_PROP_FRAME_WIDTH)
 
-# Helper lain (time, download) tetap sama...
 def _time_to_seconds(time_str):
     try:
         parts = list(map(int, time_str.split(':')))

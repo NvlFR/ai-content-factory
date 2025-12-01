@@ -1,12 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles  # <--- 1. IMPORT INI
-import os # <--- 2. IMPORT INI
+from fastapi.staticfiles import StaticFiles
+import os
+
+# --- IMPORT DATABASE ---
+from app.db import models
+from app.db.database import engine
+# -----------------------
+
 from app.api.v1 import videos
+
+# INI KUNCINYA: Membuat tabel otomatis jika belum ada
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Content Factory API")
 
-# Setup CORS (Sudah ada sebelumnya)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -15,12 +23,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- TAMBAHAN BARU: STATIC FILE MOUNTING ---
-# Pastikan folder ada dulu biar ga error
 if not os.path.exists("downloads"):
     os.makedirs("downloads")
 
-# Mounting: URL "localhost:8000/downloads" -> Folder "downloads"
 app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
 
 app.include_router(videos.router, prefix="/api/v1/videos", tags=["Videos"])
@@ -31,4 +36,4 @@ def read_root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    return {"status": "healthy", "database": "connected"}
