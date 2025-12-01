@@ -1,33 +1,45 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import axios from "axios";
-import { Loader2, PlayCircle, CheckCircle } from "lucide-react";
+import { Loader2, PlayCircle, CheckCircle, Clock, Film } from "lucide-react";
 
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
-
-  // Update: Tipe datanya sekarang Array of Strings (string[]) karena klipnya banyak
   const [resultVideo, setResultVideo] = useState<string[] | null>(null);
-
   const [logs, setLogs] = useState<string[]>([]);
+
+  // State untuk History
+  const [history, setHistory] = useState<any[]>([]);
+
+  // Load History saat halaman dibuka
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await axios.get("http://localhost:8000/api/v1/videos/");
+      setHistory(res.data);
+    } catch (err) {
+      console.error("Gagal load history", err);
+    }
+  };
 
   const handleProcess = async () => {
     if (!url) return;
     setLoading(true);
     setStatus("processing");
     setLogs(["🚀 Initializing job..."]);
-    setResultVideo(null); // Reset hasil sebelumnya
+    setResultVideo(null);
 
     try {
       const res = await axios.post("http://localhost:8000/api/v1/videos/", {
         url,
       });
       const id = res.data.task_id;
-      setTaskId(id);
       addLog(`Job ID: ${id} created.`);
       pollStatus(id);
     } catch (error) {
@@ -46,11 +58,6 @@ export default function Dashboard() {
         );
         const state = res.data.status;
 
-        // Update Log jika ada progress info
-        if (res.data.progress && typeof res.data.progress === "object") {
-          // Bisa tambah logika update log detail disini jika perlu
-        }
-
         if (state === "SUCCESS") {
           clearInterval(interval);
           setStatus("completed");
@@ -58,9 +65,9 @@ export default function Dashboard() {
           addLog("✅ Process completed successfully!");
 
           const clips = res.data.result.generated_clips;
-          // Pastikan clips ada isinya
           if (clips && clips.length > 0) {
-            setResultVideo(clips); // Simpan Array Video
+            setResultVideo(clips);
+            fetchHistory(); // Refresh tabel history
           }
         } else if (state === "FAILURE") {
           clearInterval(interval);
@@ -68,7 +75,6 @@ export default function Dashboard() {
           setLoading(false);
           addLog("❌ Job failed.");
         } else {
-          // Status polling biasa
           addLog(`⏳ Status: ${state}...`);
         }
       } catch (err) {
@@ -79,13 +85,18 @@ export default function Dashboard() {
     }, 2000);
   };
 
-  const addLog = (msg: string) => {
-    // Tampilkan 5 log terakhir saja biar rapi, atau semua juga boleh
-    setLogs((prev) => [...prev, msg]);
+  const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
+
+  // Fungsi untuk memuat ulang project dari history
+  const loadFromHistory = (clips: any[]) => {
+    const paths = clips.map((c) => c.file_path);
+    setResultVideo(paths);
+    setStatus("completed");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
-    <div className="min-h-screen p-8 max-w-6xl mx-auto">
+    <div className="min-h-screen p-8 max-w-6xl mx-auto pb-20">
       <header className="mb-10 text-center">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">
           AI Content Factory
@@ -97,9 +108,6 @@ export default function Dashboard() {
 
       {/* INPUT SECTION */}
       <div className="bg-white shadow-sm border border-slate-200 rounded-xl p-6 mb-8 max-w-3xl mx-auto">
-        <label className="block text-sm font-medium text-slate-700 mb-2">
-          YouTube Video URL
-        </label>
         <div className="flex gap-3">
           <input
             type="text"
@@ -124,8 +132,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* KOLOM KIRI: LOGS (Lebar 1 kolom) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-12">
+        {/* LOGS */}
         <div className="lg:col-span-1 bg-slate-50 rounded-xl p-6 border border-slate-200 h-[500px] overflow-y-auto font-mono text-sm shadow-inner">
           <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
             <Loader2 className="w-4 h-4" /> System Logs
@@ -152,7 +160,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* KOLOM KANAN: PREVIEW GRID (Lebar 2 kolom) */}
+        {/* PREVIEW */}
         <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6 flex flex-col items-center min-h-[500px]">
           {status === "completed" && resultVideo ? (
             <div className="w-full">
@@ -160,9 +168,6 @@ export default function Dashboard() {
                 <CheckCircle className="w-5 h-5" /> Processing Complete:{" "}
                 {resultVideo.length} Clips Generated
               </div>
-
-              {/* GRID VIDEO: Tampilkan semua klip */}
-
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {resultVideo.map((clip, idx) => (
                   <div
@@ -170,7 +175,6 @@ export default function Dashboard() {
                     className="flex flex-col items-center bg-slate-50 p-3 rounded-xl border border-slate-100"
                   >
                     <div className="relative rounded-lg overflow-hidden shadow-md bg-black w-full aspect-[9/16]">
-                      {/* NATIVE HTML5 VIDEO TAG */}
                       <video
                         className="w-full h-full object-cover"
                         controls
@@ -181,14 +185,9 @@ export default function Dashboard() {
                           src={`http://localhost:8000/${clip}`}
                           type="video/mp4"
                         />
-                        Your browser does not support the video tag.
                       </video>
                     </div>
-
                     <div className="mt-3 w-full text-center">
-                      <span className="block text-xs font-bold text-slate-700 mb-1">
-                        Clip #{idx + 1}
-                      </span>
                       <a
                         href={`http://localhost:8000/${clip}`}
                         target="_blank"
@@ -207,13 +206,82 @@ export default function Dashboard() {
                 <PlayCircle className="w-10 h-10 opacity-20" />
               </div>
               <p>Output preview will appear here</p>
-              {loading && (
-                <p className="text-xs mt-2 animate-pulse text-indigo-400">
-                  Processing video...
-                </p>
-              )}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* --- HISTORY SECTION --- */}
+      <div className="mt-12">
+        <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
+          <Clock className="w-5 h-5" /> Recent Projects
+        </h2>
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+          <table className="w-full text-sm text-left">
+            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-200">
+              <tr>
+                <th className="px-6 py-4">Status</th>
+                <th className="px-6 py-4">Video Source</th>
+                <th className="px-6 py-4">Created At</th>
+                <th className="px-6 py-4">Clips</th>
+                <th className="px-6 py-4 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {history.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-6 py-8 text-center text-slate-400"
+                  >
+                    No history found. Start creating!
+                  </td>
+                </tr>
+              ) : (
+                history.map((project) => (
+                  <tr key={project.id} className="hover:bg-slate-50 transition">
+                    <td className="px-6 py-4">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          project.status === "completed"
+                            ? "bg-green-100 text-green-700"
+                            : project.status === "failed"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-yellow-100 text-yellow-700"
+                        }`}
+                      >
+                        {project.status.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-slate-700 max-w-xs truncate">
+                      <a
+                        href={project.youtube_url}
+                        target="_blank"
+                        className="hover:text-indigo-600 hover:underline flex items-center gap-2"
+                      >
+                        <Film className="w-4 h-4" /> {project.youtube_url}
+                      </a>
+                    </td>
+                    <td className="px-6 py-4 text-slate-500">
+                      {new Date(project.created_at).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 font-medium text-slate-700">
+                      {project.clips.length} Clips
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={() => loadFromHistory(project.clips)}
+                        disabled={project.clips.length === 0}
+                        className="text-indigo-600 font-medium hover:text-indigo-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        View Results
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
