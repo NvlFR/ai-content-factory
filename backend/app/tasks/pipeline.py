@@ -60,7 +60,8 @@ def process_video_pipeline(self, youtube_url: str):
 
 def _download_video(url, output_folder):
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        # Ambil video MP4 dengan tinggi maksimal 1080 pixel (HD), audio m4a
+        'format': 'bestvideo[height<=1080][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': f'{output_folder}/source.%(ext)s',
         'quiet': True,
         'no_warnings': True,
@@ -104,24 +105,37 @@ def _smart_crop(video_path, transcript, output_folder):
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
     
+    # Hitung crop 9:16
     target_width = int(height * 9 / 16)
     x_start = int(center_x - (target_width // 2))
-    x_start = max(0, min(x_start, width - target_width)) # Clamp
+    x_start = max(0, min(x_start, width - target_width)) # Clamp agar tidak keluar batas
     
     output_filename = f"{output_folder}/clip_final.mp4"
     
+    print(f"⚙️ FFmpeg Config: Crop X={x_start}, W={target_width}, H={height}")
+
     try:
-        (
-            ffmpeg
-            .input(video_path, ss=start, t=(end-start))
-            .filter('crop', target_width, height, x_start, 0)
-            .output(output_filename, vcodec='libx264', acodec='aac')
-            .overwrite_output()
-            .run(quiet=True)
-        )
+        # --- PERBAIKAN UTAMA DI SINI ---
+        # Kita chaining filter secara eksplisit: Input -> Crop -> Format Pixel -> Output
+        stream = ffmpeg.input(video_path, ss=start, t=(end-start))
+        stream = stream.filter('crop', target_width, height, x_start, 0)
+        
+        #         # Paksa format yuv420p agar kompatibel dengan Browser/QuickTime/Android
+        stream = stream.filter('format', 'yuv420p')
+        
+        stream = stream.output(output_filename, vcodec='libx264', acodec='aac', preset='fast')
+        
+        # Jalankan dengan capture_stderr agar kita bisa baca errornya kalau gagal
+        stream.overwrite_output().run(capture_stderr=True)
+        
         generated_files.append(output_filename)
-    except Exception as e:
-        print(f"❌ FFmpeg Error: {e}")
+        print(f"✅ Render Berhasil: {output_filename}")
+
+    except ffmpeg.Error as e:
+        # Tampilkan detail error yang sebenarnya (Bukan cuma 'ffmpeg error')
+        error_message = e.stderr.decode('utf8') if e.stderr else "Unknown error"
+        print(f"❌ FFmpeg Gagal Total!")
+        print(f"🔍 Detail Error:\n{error_message}")
         
     return generated_files
 
