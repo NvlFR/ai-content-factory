@@ -1,3 +1,4 @@
+import subprocess
 from celery import Celery
 import os
 import yt_dlp
@@ -17,43 +18,54 @@ celery_app = Celery(
 # Mock Data untuk hemat kuota (Bisa diganti False jika saldo sudah ada)
 USE_MOCK_AI = True
 
+# Mock Data yang lebih kaya (Simulasi 3 Klip Viral)
 MOCK_TRANSCRIPT = {
-    "text": "All right, so here we are in front of the elephants.",
+    "text": "Full transcript text...",
     "segments": [
-        {"start": 0.0, "end": 4.5, "text": "Opening Scene"},
-        {"start": 4.5, "end": 9.5, "text": "The cool thing about these guys..."},
+        # Klip 1: Detik 0 sampai 5
+        {"start": 0.0, "end": 5.0, "text": "Clip 1: Bagian Awal."},
+        # Klip 2: Detik 5 sampai 10
+        {"start": 5.0, "end": 10.0, "text": "Clip 2: Bagian Tengah."},
+        # Klip 3: Detik 10 sampai 15
+        {"start": 10.0, "end": 15.0, "text": "Clip 3: Bagian Akhir."}
     ]
 }
 
 @celery_app.task(bind=True)
 def process_video_pipeline(self, youtube_url: str):
-    """
-    Task Utama: Menjalankan seluruh proses dari Download sampai Crop.
-    """
     task_id = self.request.id
     work_dir = f"downloads/{task_id}"
     os.makedirs(work_dir, exist_ok=True)
     
-    print(f"🚀 [Task {task_id}] Memulai proses untuk: {youtube_url}")
+    print(f"🚀 [Task {task_id}] Memulai proses V2 (Multi-Clip) untuk: {youtube_url}")
 
-    # --- STEP 1: DOWNLOAD ---
+    # 1. DOWNLOAD
     self.update_state(state='PROGRESS', meta={'status': 'Downloading Video...'})
     video_path = _download_video(youtube_url, work_dir)
-    if not video_path:
-        return {"status": "failed", "error": "Download failed"}
+    if not video_path: return {"status": "failed", "error": "Download failed"}
 
-    # --- STEP 2: TRANSCRIBE ---
-    self.update_state(state='PROGRESS', meta={'status': 'Transcribing Audio...'})
+    # 2. TRANSCRIBE (Disini nanti otak AI bekerja)
+    self.update_state(state='PROGRESS', meta={'status': 'AI Analyzing Content...'})
     transcript = _transcribe_audio(video_path)
     
-    # --- STEP 3: ANALYZE & CROP ---
-    self.update_state(state='PROGRESS', meta={'status': 'Analyzing & Cropping...'})
-    clips = _smart_crop(video_path, transcript, work_dir)
+    # 3. SMART CROP LOOP (Memproses SEMUA segmen, bukan cuma satu)
+    self.update_state(state='PROGRESS', meta={'status': 'Rendering Multiple Clips...'})
+    
+    final_clips = []
+    # Loop semua segmen yang ditemukan AI
+    for i, segmen in enumerate(transcript['segments']):
+        clip_name = f"clip_{i+1}.mp4"
+        print(f"🔄 Processing Clip #{i+1}: {segmen['text']}")
+        
+        # Panggil fungsi crop yang baru
+        result_path = _smart_crop_segment(video_path, segmen, work_dir, clip_name)
+        if result_path:
+            final_clips.append(result_path)
 
     return {
         "status": "completed",
         "original_video": video_path,
-        "generated_clips": clips
+        "generated_clips": final_clips # Mengembalikan LIST banyak video
     }
 
 # --- HELPER FUNCTIONS (Fungsi Pembantu) ---
@@ -61,6 +73,7 @@ def process_video_pipeline(self, youtube_url: str):
 def _download_video(url, output_folder):
     ydl_opts = {
         # Ambil video MP4 dengan tinggi maksimal 1080 pixel (HD), audio m4a
+        # [vcodec^=avc1] PENTING: Menghindari codec AV1 yang bikin error di Docker
         'format': 'bestvideo[height<=1080][ext=mp4][vcodec^=avc1]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': f'{output_folder}/source.%(ext)s',
         'quiet': True,
@@ -88,59 +101,59 @@ def _transcribe_audio(video_path):
         )
     return res
 
-def _smart_crop(video_path, transcript, output_folder):
-    generated_files = []
-    
-    # Ambil 1 segmen pertama saja untuk demo
-    segmen = transcript['segments'][1] if len(transcript['segments']) > 1 else transcript['segments'][0]
-    
+def _smart_crop_segment(video_path, segmen, output_folder, filename):
     start, end = segmen['start'], segmen['end']
-    print(f"✂️ Cropping segmen: {start}s - {end}s")
+    duration = end - start
+    output_filename = f"{output_folder}/{filename}"
     
-    # Logika deteksi wajah (Sederhana)
-    center_x = _get_face_center(video_path, start)
+    # 1. Deteksi Wajah
+    center_x = _get_face_center(video_path, start + (duration/2))
     
     cap = cv2.VideoCapture(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
     
-    # Hitung crop 9:16
+    # 2. Hitung Crop
     target_width = int(height * 9 / 16)
     x_start = int(center_x - (target_width // 2))
-    x_start = max(0, min(x_start, width - target_width)) # Clamp agar tidak keluar batas
+    x_start = max(0, min(x_start, width - target_width))
     
-    output_filename = f"{output_folder}/clip_final.mp4"
+    print(f"   ⚙️ Rendering {filename} via Raw FFmpeg...")
+
+    # 3. Render Menggunakan Subprocess (Raw Command) - LEBIH STABIL
+    # Perintah: ffmpeg -y -ss [start] -t [dur] -i [input] -vf [filter] -c:v libx264 -c:a aac [output]
     
-    print(f"⚙️ FFmpeg Config: Crop X={x_start}, W={target_width}, H={height}")
+    command = [
+        'ffmpeg', 
+        '-y',                  # Overwrite file jika ada
+        '-ss', str(start),     # Start time
+        '-t', str(duration),   # Duration
+        '-i', video_path,      # Input file
+        '-vf', f"crop={target_width}:{height}:{x_start}:0,format=yuv420p", # Filter Crop & Pixel
+        '-c:v', 'libx264',     # Video Codec
+        '-c:a', 'aac',         # Audio Codec (PENTING: Ini memaksa audio masuk)
+        '-b:a', '128k',        # Bitrate Audio
+        '-preset', 'ultrafast',
+        output_filename
+    ]
 
     try:
-        # --- PERBAIKAN UTAMA DI SINI ---
-        # Kita chaining filter secara eksplisit: Input -> Crop -> Format Pixel -> Output
-        stream = ffmpeg.input(video_path, ss=start, t=(end-start))
-        stream = stream.filter('crop', target_width, height, x_start, 0)
+        # Jalankan perintah terminal dari Python
+        result = subprocess.run(
+            command, 
+            check=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
+        )
+        print(f"   ✅ Sukses: {filename}")
+        return output_filename
         
-        #         # Paksa format yuv420p agar kompatibel dengan Browser/QuickTime/Android
-        stream = stream.filter('format', 'yuv420p')
-        
-        stream = stream.output(output_filename, vcodec='libx264', acodec='aac', preset='fast')
-        
-        # Jalankan dengan capture_stderr agar kita bisa baca errornya kalau gagal
-        stream.overwrite_output().run(capture_stderr=True)
-        
-        generated_files.append(output_filename)
-        print(f"✅ Render Berhasil: {output_filename}")
-
-    except ffmpeg.Error as e:
-        # Tampilkan detail error yang sebenarnya (Bukan cuma 'ffmpeg error')
-        error_message = e.stderr.decode('utf8') if e.stderr else "Unknown error"
-        print(f"❌ FFmpeg Gagal Total!")
-        print(f"🔍 Detail Error:\n{error_message}")
-        
-    return generated_files
-
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode('utf-8') if e.stderr else "Unknown Error"
+        print(f"   ❌ FFmpeg Gagal: {error_msg}")
+        return None
 def _get_face_center(video_path, start_time):
-    # (Versi ringkas dari logika test_crop.py)
     cap = cv2.VideoCapture(video_path)
     cap.set(cv2.CAP_PROP_POS_MSEC, start_time * 1000)
     mp_face = mp.solutions.face_detection
@@ -150,11 +163,13 @@ def _get_face_center(video_path, start_time):
         for _ in range(5): # Cek 5 frame
             success, img = cap.read()
             if not success: break
+            # Convert ke RGB karena OpenCV pakai BGR
             results = face_det.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
             if results.detections:
                 bbox = results.detections[0].location_data.relative_bounding_box
                 detected_x.append(bbox.xmin + bbox.width/2)
                 
     cap.release()
+    # Kalau tidak ada wajah, ambil tengah (0.5)
     avg_x = sum(detected_x)/len(detected_x) if detected_x else 0.5
     return avg_x * cap.get(cv2.CAP_PROP_FRAME_WIDTH)

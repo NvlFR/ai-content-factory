@@ -3,19 +3,16 @@
 import { useState } from "react";
 import axios from "axios";
 import { Loader2, PlayCircle, CheckCircle } from "lucide-react";
-import dynamic from "next/dynamic";
-
-// FIX 1: Gunakan Dynamic Import dengan ssr: false
-const ReactPlayer = dynamic(() => import("react-player"), {
-  ssr: false,
-}) as any;
 
 export default function Dashboard() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [status, setStatus] = useState<string>("idle");
-  const [resultVideo, setResultVideo] = useState<string | null>(null);
+
+  // Update: Tipe datanya sekarang Array of Strings (string[]) karena klipnya banyak
+  const [resultVideo, setResultVideo] = useState<string[] | null>(null);
+
   const [logs, setLogs] = useState<string[]>([]);
 
   const handleProcess = async () => {
@@ -23,7 +20,7 @@ export default function Dashboard() {
     setLoading(true);
     setStatus("processing");
     setLogs(["🚀 Initializing job..."]);
-    setResultVideo(null);
+    setResultVideo(null); // Reset hasil sebelumnya
 
     try {
       const res = await axios.post("http://localhost:8000/api/v1/videos/", {
@@ -49,6 +46,11 @@ export default function Dashboard() {
         );
         const state = res.data.status;
 
+        // Update Log jika ada progress info
+        if (res.data.progress && typeof res.data.progress === "object") {
+          // Bisa tambah logika update log detail disini jika perlu
+        }
+
         if (state === "SUCCESS") {
           clearInterval(interval);
           setStatus("completed");
@@ -56,8 +58,9 @@ export default function Dashboard() {
           addLog("✅ Process completed successfully!");
 
           const clips = res.data.result.generated_clips;
+          // Pastikan clips ada isinya
           if (clips && clips.length > 0) {
-            setResultVideo(clips[0]);
+            setResultVideo(clips); // Simpan Array Video
           }
         } else if (state === "FAILURE") {
           clearInterval(interval);
@@ -65,21 +68,24 @@ export default function Dashboard() {
           setLoading(false);
           addLog("❌ Job failed.");
         } else {
+          // Status polling biasa
           addLog(`⏳ Status: ${state}...`);
         }
       } catch (err) {
         clearInterval(interval);
         setStatus("failed");
+        setLoading(false);
       }
     }, 2000);
   };
 
   const addLog = (msg: string) => {
+    // Tampilkan 5 log terakhir saja biar rapi, atau semua juga boleh
     setLogs((prev) => [...prev, msg]);
   };
 
   return (
-    <div className="min-h-screen p-8 max-w-5xl mx-auto">
+    <div className="min-h-screen p-8 max-w-6xl mx-auto">
       <header className="mb-10 text-center">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">
           AI Content Factory
@@ -89,7 +95,8 @@ export default function Dashboard() {
         </p>
       </header>
 
-      <div className="bg-white shadow-sm border border-slate-200 rounded-xl p-6 mb-8">
+      {/* INPUT SECTION */}
+      <div className="bg-white shadow-sm border border-slate-200 rounded-xl p-6 mb-8 max-w-3xl mx-auto">
         <label className="block text-sm font-medium text-slate-700 mb-2">
           YouTube Video URL
         </label>
@@ -117,9 +124,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* LOGS */}
-        <div className="bg-slate-50 rounded-xl p-6 border border-slate-200 h-96 overflow-y-auto font-mono text-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* KOLOM KIRI: LOGS (Lebar 1 kolom) */}
+        <div className="lg:col-span-1 bg-slate-50 rounded-xl p-6 border border-slate-200 h-[500px] overflow-y-auto font-mono text-sm shadow-inner">
           <h3 className="font-semibold text-slate-700 mb-4 flex items-center gap-2">
             <Loader2 className="w-4 h-4" /> System Logs
           </h3>
@@ -132,7 +139,7 @@ export default function Dashboard() {
             {logs.map((log, idx) => (
               <div
                 key={idx}
-                className="text-slate-600 border-l-2 border-slate-300 pl-3 py-1"
+                className="text-slate-600 border-l-2 border-slate-300 pl-3 py-1 text-xs break-words"
               >
                 {log}
               </div>
@@ -145,52 +152,66 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* PREVIEW */}
-        <div className="bg-white rounded-xl border border-slate-200 p-6 flex flex-col items-center justify-center min-h-[400px]">
+        {/* KOLOM KANAN: PREVIEW GRID (Lebar 2 kolom) */}
+        <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6 flex flex-col items-center min-h-[500px]">
           {status === "completed" && resultVideo ? (
-            <div className="w-full flex flex-col items-center animate-in fade-in duration-500">
-              <div className="flex items-center gap-2 text-green-600 mb-4 font-medium">
-                <CheckCircle className="w-5 h-5" /> Clip Ready
+            <div className="w-full">
+              <div className="flex items-center gap-2 text-green-600 mb-6 font-medium justify-center bg-green-50 py-2 rounded-lg border border-green-100">
+                <CheckCircle className="w-5 h-5" /> Processing Complete:{" "}
+                {resultVideo.length} Clips Generated
               </div>
 
-             {/* FIX 3: Ganti ReactPlayer dengan Native HTML5 Video */}
-               <div className="relative rounded-xl overflow-hidden shadow-2xl border-4 border-slate-900 bg-black w-[250px] aspect-[9/16]">
-                  <video 
-                    key={resultVideo} // PENTING: Agar React me-reset player saat video baru jadi
-                    className="w-full h-full object-cover"
-                    controls 
-                    autoPlay 
-                    muted 
-                    loop
-                    playsInline
+              {/* GRID VIDEO: Tampilkan semua klip */}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {resultVideo.map((clip, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col items-center bg-slate-50 p-3 rounded-xl border border-slate-100"
                   >
-                    <source src={`http://localhost:8000/${resultVideo}`} type="video/mp4" />
-                    Your browser does not support the video tag.
-                  </video>
-               </div>
-              <div className="mt-6 text-center">
-                <p className="text-xs text-slate-400 mb-2">
-                  Original Path: {resultVideo}
-                </p>
-                <button
-                  onClick={() =>
-                    window.open(
-                      `http://localhost:8000/${resultVideo}`,
-                      "_blank"
-                    )
-                  }
-                  className="text-indigo-600 hover:text-indigo-800 text-sm font-medium hover:underline"
-                >
-                  Download .MP4
-                </button>
+                    <div className="relative rounded-lg overflow-hidden shadow-md bg-black w-full aspect-[9/16]">
+                      {/* NATIVE HTML5 VIDEO TAG */}
+                      <video
+                        className="w-full h-full object-cover"
+                        controls
+                        playsInline
+                        preload="metadata"
+                      >
+                        <source
+                          src={`http://localhost:8000/${clip}`}
+                          type="video/mp4"
+                        />
+                        Your browser does not support the video tag.
+                      </video>
+                    </div>
+
+                    <div className="mt-3 w-full text-center">
+                      <span className="block text-xs font-bold text-slate-700 mb-1">
+                        Clip #{idx + 1}
+                      </span>
+                      <a
+                        href={`http://localhost:8000/${clip}`}
+                        target="_blank"
+                        className="text-xs bg-white border border-slate-300 px-3 py-1 rounded-full text-indigo-600 hover:bg-indigo-50 transition block w-full"
+                      >
+                        Download MP4
+                      </a>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
-            <div className="text-center text-slate-400">
-              <div className="bg-slate-50 w-24 h-40 mx-auto rounded mb-3 border border-slate-200 flex items-center justify-center">
-                <PlayCircle className="w-8 h-8 opacity-20" />
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
+              <div className="bg-slate-50 w-24 h-40 mx-auto rounded-lg mb-4 border border-slate-200 flex items-center justify-center shadow-sm">
+                <PlayCircle className="w-10 h-10 opacity-20" />
               </div>
               <p>Output preview will appear here</p>
+              {loading && (
+                <p className="text-xs mt-2 animate-pulse text-indigo-400">
+                  Processing video...
+                </p>
+              )}
             </div>
           )}
         </div>
