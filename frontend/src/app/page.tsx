@@ -97,13 +97,21 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen p-8 max-w-6xl mx-auto pb-20">
-      <header className="mb-10 text-center">
+      <header className="mb-10 flex flex-col items-center">
         <h1 className="text-3xl font-bold tracking-tight text-slate-900">
           AI Content Factory
         </h1>
-        <p className="text-slate-500 mt-2">
+        <p className="text-slate-500 mt-2 mb-6">
           Turn long YouTube videos into viral shorts automatically.
         </p>
+
+        {/* TOMBOL BARU */}
+        <a
+          href="/channels"
+          className="text-sm font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1 bg-indigo-50 px-4 py-2 rounded-full border border-indigo-100 hover:bg-indigo-100 transition"
+        >
+          Manage Monitored Channels &rarr;
+        </a>
       </header>
 
       {/* INPUT SECTION */}

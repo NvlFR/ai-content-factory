@@ -17,6 +17,8 @@ from app.db.database import SessionLocal
 from app.db.models import Project, GeneratedClip
 # -----------------------
 
+from celery.schedules import crontab
+
 # Konfigurasi Celery
 celery_app = Celery(
     "worker",
@@ -270,3 +272,14 @@ def _download_video(url, output_folder):
     except Exception as e:
         print(f"❌ Download Error: {e}")
         return None
+
+# --- SETUP JADWAL CRONJOB ---
+
+# Tambahkan konfigurasi beat di app celery yang sudah ada
+celery_app.conf.beat_schedule = {
+    'check-youtube-every-hour': {
+        'task': 'app.tasks.watcher.run_watcher_task', # Kita butuh wrapper task
+        'schedule': crontab(minute=0), # Jalan setiap jam menit ke-0 (jam 1:00, 2:00, dst)
+        # 'schedule': 60.0, # ATAU: Jalan setiap 60 detik (untuk testing cepat)
+    },
+}

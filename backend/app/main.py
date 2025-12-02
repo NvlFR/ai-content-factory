@@ -8,7 +8,7 @@ from app.db import models
 from app.db.database import engine
 # -----------------------
 
-from app.api.v1 import videos
+from app.api.v1 import videos, channels
 
 # INI KUNCINYA: Membuat tabel otomatis jika belum ada
 models.Base.metadata.create_all(bind=engine)
@@ -29,6 +29,7 @@ if not os.path.exists("downloads"):
 app.mount("/downloads", StaticFiles(directory="downloads"), name="downloads")
 
 app.include_router(videos.router, prefix="/api/v1/videos", tags=["Videos"])
+app.include_router(channels.router, prefix="/api/v1/channels", tags=["Channels"]) # <--- TAMBAHKAN INI
 
 @app.get("/")
 def read_root():

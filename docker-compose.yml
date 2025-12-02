@@ -37,6 +37,22 @@ services:
       - backend
       - redis
 
+  # 5. SCHEDULER (Celery Beat)
+  beat:
+    build: ./backend
+    container_name: content_factory_beat
+    # Perintah untuk menjalankan penjadwal
+    command: celery -A app.tasks.pipeline beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://user:password@db:5432/content_factory_db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - worker
+
   # 3. DATABASE (PostgreSQL)
   db:
     image: postgres:15-alpine
