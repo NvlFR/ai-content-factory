@@ -28,6 +28,10 @@ class CandidateSchema(BaseModel):
     description: str
     viral_score: int
     is_rendered: bool
+    # Field Baru
+    draft_video_path: Optional[str] = None
+    transcript_data: Optional[List[dict]] = None # List of objects
+    
     class Config: from_attributes = True
 
 class ProjectSchema(BaseModel):
@@ -72,6 +76,13 @@ def list_projects(skip: int = 0, limit: int = 20, db: Session = Depends(get_db))
     projects = db.query(models.Project).order_by(models.Project.created_at.desc()).offset(skip).limit(limit).all()
     return projects
 
+@router.post("/prepare_editor/{candidate_id}")
+def prepare_editor(candidate_id: int):
+    """Trigger persiapan data untuk editor (Crop Polos + Whisper JSON)."""
+    from app.tasks.pipeline import prepare_editor_task
+    task = prepare_editor_task.delay(candidate_id)
+    return {"task_id": task.id, "status": "editor_prep_started"}
+
 @router.get("/{task_id}")
 def get_task_status(task_id: str, db: Session = Depends(get_db)):
     task_result = AsyncResult(task_id)
@@ -79,3 +90,11 @@ def get_task_status(task_id: str, db: Session = Depends(get_db)):
         "task_id": task_id,
         "status": task_result.state,
     }
+
+
+@router.get("/candidates/{candidate_id}", response_model=CandidateSchema)
+def get_candidate_detail(candidate_id: int, db: Session = Depends(get_db)):
+    candidate = db.query(models.ClipCandidate).filter(models.ClipCandidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return candidate

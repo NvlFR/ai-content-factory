@@ -9,7 +9,6 @@ import {
   Clock,
   Film,
   Scissors,
-  Play,
 } from "lucide-react";
 
 export default function Dashboard() {

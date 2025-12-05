@@ -112,9 +112,64 @@ def analyze_video_task(self, youtube_url: str):
         return {"status": "failed", "error": str(e)}
     finally:
         db.close()
-# ==========================================
-# TASK 2: THE RENDERER
-# ==========================================
+
+
+@celery_app.task(bind=True)
+def prepare_editor_task(self, candidate_id: int):
+    """
+    Menyiapkan data untuk Editor:
+    1. Membuat video crop 9:16 POLOS (tanpa subtitle).
+    2. Menjalankan Whisper untuk dapat JSON Transkrip.
+    3. Menyimpan keduanya ke DB.
+    """
+    print(f"📝 [Editor Prep] Preparing Candidate ID: {candidate_id}")
+    db = SessionLocal()
+    
+    try:
+        candidate = db.query(ClipCandidate).filter(ClipCandidate.id == candidate_id).first()
+        if not candidate: raise Exception("Candidate not found")
+        
+        project_id = candidate.project_id
+        work_dir = f"downloads/{project_id}"
+        video_path = f"{work_dir}/source.mp4"
+        
+        if not os.path.exists(video_path): raise Exception("Source video missing.")
+
+        # Nama File Draft
+        draft_filename = f"draft_{candidate.id}.mp4"
+        draft_path = f"{work_dir}/{draft_filename}"
+        
+        # A. BUAT VIDEO POLOS (CROP ONLY)
+        # Reuse logika crop tapi tanpa subtitle filter
+        print("   ✂️ Creating Clean Draft Video...")
+        segmen = {'start': candidate.start_time, 'end': candidate.end_time}
+        _create_clean_crop(video_path, segmen, draft_path)
+        
+        # B. TRANSKRIPSI WHISPER (JSON)
+        print("   🎤 Extracting Transcript JSON...")
+        # Ekstrak audio dari draft video biar cepat
+        temp_audio = f"{work_dir}/temp_audio_{candidate.id}.wav"
+        subprocess.run(['ffmpeg', '-y', '-i', draft_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', temp_audio], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
+        transcript_json = _transcribe_with_whisper(temp_audio)
+        if os.path.exists(temp_audio): os.remove(temp_audio)
+        
+        # C. SIMPAN KE DB
+        candidate.draft_video_path = f"downloads/{project_id}/{draft_filename}"
+        candidate.transcript_data = transcript_json
+        db.commit()
+        
+        print(f"   ✅ Editor Data Ready for Candidate #{candidate_id}")
+        return {"status": "ready_for_editing", "transcript_len": len(transcript_json)}
+
+    except Exception as e:
+        print(f"❌ Editor Prep Error: {e}")
+        return {"status": "failed", "error": str(e)}
+    finally:
+        db.close()
+
+
+
 @celery_app.task(bind=True)
 def render_single_clip_task(self, candidate_id: int):
     print(f"🎬 [Render Task] Processing Candidate ID: {candidate_id}")
@@ -279,38 +334,64 @@ def _smart_crop_segment(video_path, segmen, output_folder, filename):
 # --- HELPER LAIN (GEMINI UNTUK ANALISIS) TETAP SAMA ---
 
 def _analyze_smart_context(video_path, duration):
-    # Logika V8: Gemini mencari segmen
     print(f"   📊 Analisis Gemini (Durasi: {duration}s)")
     try:
         client = genai.Client()
         video_file = client.files.upload(file=video_path)
+        
+        # Tunggu processing dengan timeout safety
+        start_wait = time.time()
         while video_file.state.name == "PROCESSING":
-            time.sleep(2)
+            if time.time() - start_wait > 600: # Timeout 10 menit
+                print("❌ Timeout menunggu Gemini process video")
+                return None
+            time.sleep(5)
             video_file = client.files.get(name=video_file.name)
 
-        if video_file.state.name == "FAILED": return None
+        if video_file.state.name == "FAILED": 
+            print("❌ Video processing failed di sisi Google.")
+            return None
 
         target_clips = max(3, min(15, math.ceil(duration / 120)))
-        prompt = f"""
-        You are a Master Video Editor. Analyze this video.
-        Find {target_clips} segments that are VIRAL WORTHY.
         
-        OUTPUT JSON ONLY:
+        # PROMPT YANG LEBIH STABIL
+        prompt = f"""
+        You are an AI Video Editor. Analyze this video.
+        Task: Find {target_clips} interesting segments (viral clips).
+        
+        Constraints:
+        - Clip duration: 30s - 180s.
+        - Language: Use the SAME language as the video audio for titles/captions.
+        
+        Output Format: JSON List.
         [
             {{
                 "start_time": "MM:SS", 
                 "end_time": "MM:SS", 
-                "title": "Viral Topic (Indonesian)", 
-                "reason": "Why viral"
+                "title": "Interesting Title", 
+                "caption": "Summary"
             }}
         ]
         """
+        
         response = client.models.generate_content(
-            model='gemini-2.0-flash', contents=[video_file, prompt], 
+            model='gemini-2.0-flash', 
+            contents=[video_file, prompt], 
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
-        return json.loads(response.text)
-    except: return None
+        
+        print(f"   💡 RAW GEMINI RESPONSE: {response.text[:500]}...") # Print 500 char pertama buat debug
+        
+        parsed = json.loads(response.text)
+        if not parsed:
+            print("⚠️ Gemini mengembalikan list kosong []")
+            return None
+            
+        return parsed
+        
+    except Exception as e:
+        print(f"❌ Gemini Error Exception: {e}")
+        return None
 
 def _create_srt(text, duration, output_path):
     with open(output_path, "w", encoding='utf-8') as f: f.write(f"1\n00:00:00,000 --> 00:00:05,000\n{text}")
