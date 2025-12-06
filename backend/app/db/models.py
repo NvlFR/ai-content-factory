@@ -65,9 +65,26 @@ class GeneratedClip(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(String, ForeignKey("projects.id")) 
     file_path = Column(String, nullable=False) 
-    title = Column(String, nullable=True) 
+    title = Column(String, nullable=True)
+    caption = Column(Text, nullable=True)
+    is_approved = Column(Boolean, default=False)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    published_platform = Column(String, nullable=True)
+    credits_used = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     project = relationship("Project", back_populates="clips")
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    amount = Column(Integer, nullable=False)  # Negative for deduction, positive for addition
+    action = Column(String, nullable=False)  # render, purchase, bonus, refund
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    user = relationship("User")
 
 class MonitoredChannel(Base):
     __tablename__ = "monitored_channels"

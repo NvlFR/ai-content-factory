@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -293,7 +293,7 @@ async def google_token_exchange(request: GoogleAuthRequest, db: Session = Depend
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    authorization: str = None,
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
     """Get current authenticated user info"""

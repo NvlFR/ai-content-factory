@@ -13,6 +13,10 @@ import {
   LogOut,
   Settings,
   User,
+  Share2,
+  TrendingUp,
+  Zap,
+  BarChart3,
 } from "lucide-react"
 import { useAuth } from "@/hooks/use-auth"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -135,6 +139,13 @@ export default function DashboardPage() {
               Channels
             </a>
             <a
+              href="/distribution"
+              className="text-sm text-neutral-400 hover:text-white transition flex items-center gap-1"
+            >
+              <Share2 className="w-4 h-4" />
+              <span className="hidden sm:inline">Distribute</span>
+            </a>
+            <a
               href="/settings"
               className="text-sm text-neutral-400 hover:text-white transition"
             >
@@ -166,6 +177,54 @@ export default function DashboardPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {/* STATS WIDGETS */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-purple-500/20 rounded-lg flex items-center justify-center">
+                <Scissors className="w-5 h-5 text-purple-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{history.reduce((acc, p) => acc + p.clips.length, 0)}</p>
+                <p className="text-xs text-neutral-500">Clips Created</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center">
+                <Film className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{history.length}</p>
+                <p className="text-xs text-neutral-500">Videos Analyzed</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center">
+                <TrendingUp className="w-5 h-5 text-green-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{history.reduce((acc, p) => acc + p.candidates.length, 0)}</p>
+                <p className="text-xs text-neutral-500">AI Drafts</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-yellow-500/20 rounded-lg flex items-center justify-center">
+                <Zap className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{user?.credits_balance || 0}</p>
+                <p className="text-xs text-neutral-500">Credits Left</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* INPUT CARD */}
         <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 mb-8 max-w-3xl mx-auto">
           <h2 className="text-lg font-semibold mb-4">Create New Content</h2>
@@ -227,11 +286,18 @@ export default function DashboardPage() {
                       className="border border-neutral-700 rounded-lg p-4 hover:border-neutral-500 transition bg-neutral-800/50"
                     >
                       <div className="flex justify-between items-start mb-2">
-                        <span className="bg-white/10 text-white text-xs font-bold px-2 py-1 rounded">
-                          Score: {c.viral_score}
+                        <span className={`text-xs font-bold px-2 py-1 rounded flex items-center gap-1 ${
+                          c.viral_score >= 80 
+                            ? "bg-green-500/20 text-green-400" 
+                            : c.viral_score >= 60 
+                            ? "bg-yellow-500/20 text-yellow-400"
+                            : "bg-neutral-500/20 text-neutral-400"
+                        }`}>
+                          <BarChart3 className="w-3 h-3" />
+                          {c.viral_score}% Viral
                         </span>
                         <span className="text-xs text-neutral-500 font-mono">
-                          {c.start_time}s - {c.end_time}s
+                          {Math.floor(c.start_time / 60)}:{String(Math.floor(c.start_time % 60)).padStart(2, '0')} - {Math.floor(c.end_time / 60)}:{String(Math.floor(c.end_time % 60)).padStart(2, '0')}
                         </span>
                       </div>
                       <h4 className="font-bold mb-1">{c.title}</h4>

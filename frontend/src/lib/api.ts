@@ -78,11 +78,47 @@ export const channelsApi = {
 
 // Clips API  
 export const clipsApi = {
+  list: (approvedOnly?: boolean) => 
+    api.get(`/api/v1/clips/${approvedOnly ? '?approved_only=true' : ''}`),
+  
   get: (id: number) => api.get(`/api/v1/clips/${id}`),
   
   update: (id: number, data: { caption?: string; is_approved?: boolean }) =>
     api.patch(`/api/v1/clips/${id}`, data),
   
-  publish: (id: number, platform: string) =>
-    api.post(`/api/v1/clips/${id}/publish`, { platform }),
+  approve: (id: number, approved: boolean) =>
+    api.post(`/api/v1/clips/${id}/approve`, { approved }),
+  
+  delete: (id: number) => api.delete(`/api/v1/clips/${id}`),
+  
+  getPendingCount: () => api.get('/api/v1/clips/pending/count'),
+}
+
+// Distribution API
+export const distributionApi = {
+  getPlatforms: () => api.get("/api/v1/distribution/platforms"),
+  
+  getTikTokAuthUrl: () => api.get("/api/v1/distribution/tiktok/auth-url"),
+  connectTikTok: (code: string, redirectUri: string) =>
+    api.post("/api/v1/distribution/tiktok/connect", { 
+      platform: "tiktok", 
+      auth_code: code, 
+      redirect_uri: redirectUri 
+    }),
+  disconnectTikTok: () => api.delete("/api/v1/distribution/tiktok"),
+  
+  getInstagramAuthUrl: () => api.get("/api/v1/distribution/instagram/auth-url"),
+  connectInstagram: (code: string, redirectUri: string) =>
+    api.post("/api/v1/distribution/instagram/connect", { 
+      platform: "instagram", 
+      auth_code: code, 
+      redirect_uri: redirectUri 
+    }),
+  
+  publish: (clipId: number, platform: string, caption?: string) =>
+    api.post("/api/v1/distribution/publish", { 
+      clip_id: clipId, 
+      platform, 
+      caption 
+    }),
 }

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from celery.result import AsyncResult
 from sqlalchemy.orm import Session
@@ -7,8 +7,21 @@ from datetime import datetime
 
 from app.db.database import get_db
 from app.db import models
+from app.api.v1.auth import verify_jwt_token
 
 router = APIRouter()
+
+
+def get_current_user_from_token(authorization: str, db: Session) -> models.User:
+    """Extract user from JWT token"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = authorization.replace("Bearer ", "")
+    payload = verify_jwt_token(token)
+    user = db.query(models.User).filter(models.User.id == payload["sub"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 # --- SCHEMAS ---
 class VideoRequest(BaseModel):
@@ -52,14 +65,21 @@ class TaskResponse(BaseModel):
 # --- ENDPOINTS ---
 
 @router.post("/", response_model=TaskResponse)
-def create_video_task(video: VideoRequest):
+def create_video_task(
+    video: VideoRequest,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
     """Start Analysis (Draft Mode)."""
     if "youtube.com" not in video.url and "youtu.be" not in video.url:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL")
     
+    # Get current user
+    user = get_current_user_from_token(authorization, db)
+    
     # Lazy Import
     from app.tasks.pipeline import analyze_video_task
-    task = analyze_video_task.delay(video.url)
+    task = analyze_video_task.delay(video.url, user.id)
     
     return {"task_id": task.id, "status": "analysis_started"}
 
@@ -71,9 +91,17 @@ def render_candidate(candidate_id: int):
     return {"task_id": task.id, "status": "rendering_started"}
 
 @router.get("/", response_model=List[ProjectSchema])
-def list_projects(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    """Ambil daftar project beserta kandidatnya."""
-    projects = db.query(models.Project).order_by(models.Project.created_at.desc()).offset(skip).limit(limit).all()
+def list_projects(
+    skip: int = 0, 
+    limit: int = 20, 
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Ambil daftar project milik user."""
+    user = get_current_user_from_token(authorization, db)
+    projects = db.query(models.Project).filter(
+        models.Project.user_id == user.id
+    ).order_by(models.Project.created_at.desc()).offset(skip).limit(limit).all()
     return projects
 
 @router.post("/prepare_editor/{candidate_id}")

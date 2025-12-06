@@ -17,7 +17,7 @@ from celery.schedules import crontab
 
 # --- IMPORT DATABASE ---
 from app.db.database import SessionLocal
-from app.db.models import Project, GeneratedClip, ClipCandidate
+from app.db.models import Project, GeneratedClip, ClipCandidate, User, CreditTransaction
 # -----------------------
 
 celery_app = Celery(
@@ -36,22 +36,24 @@ whisper_model = None
 # TASK 1: THE ANALYST (Updated Debugging)
 # ==========================================
 @celery_app.task(bind=True)
-def analyze_video_task(self, youtube_url: str):
+def analyze_video_task(self, youtube_url: str, user_id: str = None):
     task_id = self.request.id
     work_dir = f"downloads/{task_id}"
     os.makedirs(work_dir, exist_ok=True)
     
-    print(f"🚀 [Task {task_id}] START: Analyst Mode V10 (Debug & Loose Filter)")
+    print(f"🚀 [Task {task_id}] START: Analyst Mode V10 (User: {user_id})")
     db = SessionLocal()
     
     try:
         # 1. Create/Update Project
         project = db.query(Project).filter(Project.id == task_id).first()
         if not project:
-            new_project = Project(id=task_id, youtube_url=youtube_url, status="analyzing")
+            new_project = Project(id=task_id, youtube_url=youtube_url, status="analyzing", user_id=user_id)
             db.add(new_project)
         else:
             project.status = "analyzing"
+            if user_id:
+                project.user_id = user_id
         db.commit()
 
         # 2. Download
@@ -174,10 +176,21 @@ def prepare_editor_task(self, candidate_id: int):
 def render_single_clip_task(self, candidate_id: int):
     print(f"🎬 [Render Task] Processing Candidate ID: {candidate_id}")
     db = SessionLocal()
+    CREDITS_PER_RENDER = 1
     
     try:
         candidate = db.query(ClipCandidate).filter(ClipCandidate.id == candidate_id).first()
         if not candidate: raise Exception("Candidate not found")
+        
+        project = db.query(Project).filter(Project.id == candidate.project_id).first()
+        if not project: raise Exception("Project not found")
+        
+        # Check user credits
+        user = None
+        if project.user_id:
+            user = db.query(User).filter(User.id == project.user_id).first()
+            if user and user.credits_balance < CREDITS_PER_RENDER:
+                raise Exception(f"Insufficient credits. Need {CREDITS_PER_RENDER}, have {user.credits_balance}")
         
         project_id = candidate.project_id
         work_dir = f"downloads/{project_id}"
@@ -195,12 +208,26 @@ def render_single_clip_task(self, candidate_id: int):
             final_clip = GeneratedClip(
                 project_id=project_id,
                 file_path=result_path,
-                title=candidate.title
+                title=candidate.title,
+                credits_used=CREDITS_PER_RENDER
             )
             db.add(final_clip)
             candidate.is_rendered = True
+            
+            # Deduct credits
+            if user:
+                user.credits_balance -= CREDITS_PER_RENDER
+                transaction = CreditTransaction(
+                    user_id=user.id,
+                    amount=-CREDITS_PER_RENDER,
+                    action="render",
+                    description=f"Rendered clip: {candidate.title}"
+                )
+                db.add(transaction)
+                print(f"   💰 Deducted {CREDITS_PER_RENDER} credit from user {user.id[:8]}...")
+            
             db.commit()
-            return {"status": "completed", "path": result_path}
+            return {"status": "completed", "path": result_path, "credits_used": CREDITS_PER_RENDER}
         else:
             raise Exception("Gagal merender video")
 

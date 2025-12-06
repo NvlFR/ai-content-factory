@@ -130,11 +130,11 @@ def check_connected_channels_for_new_videos():
             # Check if this is a new video
             if channel.last_video_id != video_id:
                 print(f"      🔥 VIDEO BARU DETECTED: {video_title}")
-                print(f"      🚀 Memicu Analisis Otomatis...")
+                print(f"      🚀 Memicu Analisis Otomatis untuk User: {channel.user_id[:8]}...")
                 
-                # Trigger analysis task
+                # Trigger analysis task with user_id
                 from app.tasks.pipeline import analyze_video_task
-                analyze_video_task.delay(video_url)
+                analyze_video_task.delay(video_url, channel.user_id)
                 
                 # Update last_video_id in database
                 channel.last_video_id = video_id
